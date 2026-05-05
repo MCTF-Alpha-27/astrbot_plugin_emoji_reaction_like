@@ -1,0 +1,51 @@
+{
+    "auto_react": {
+        "description": "是否启用自动表情反应",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，bot 会根据反应规则自动对收到的消息添加表情反应"
+    },
+    "react_rules": {
+        "description": "表情反应规则",
+        "type": "template_list",
+        "templates": {
+            "react_rule": {
+                "name": "反应规则",
+                "hint": "每条规则定义一组表情及其触发正则表达式，正则为空时对所有消息反应",
+                "items": {
+                    "emoji_ids": {
+                        "description": "表情 ID 列表",
+                        "type": "list",
+                        "default": ["76"],
+                        "hint": "QQ原生表情填数字(0-500)，如448=放大招；Unicode emoji直接填字符如😊"
+                    },
+                    "regex_list": {
+                        "description": "触发正则表达式列表",
+                        "type": "list",
+                        "default": [],
+                        "hint": "消息匹配列表中任意正则表达式时触发反应，留空则对所有消息反应"
+                    }
+                }
+            }
+        }
+    },
+    "react_scope": {
+        "description": "自动反应范围",
+        "type": "string",
+        "default": "all",
+        "options": ["all", "group", "private"],
+        "hint": "all=所有消息, group=仅群聊, private=仅私聊"
+    },
+    "llm_react_enabled": {
+        "description": "是否启用 LLM 输出表情反应",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，当LLM输出中包含匹配正则的内容时，自动对用户消息添加表情反应并从回复中移除匹配文本"
+    },
+    "llm_react_regex": {
+        "description": "LLM 输出表情反应正则表达式",
+        "type": "string",
+        "default": "\\[react:([^\\]]+)\\]",
+        "hint": "用于匹配LLM输出中表情反应标记的正则表达式，第一个捕获组为emoji_id。默认匹配 [react:76] 或 [react:😊] 格式"
+    }
+}

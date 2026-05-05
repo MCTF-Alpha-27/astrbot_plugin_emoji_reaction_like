@@ -1,0 +1,8 @@
+name: emoji_like
+display_name: EmojiReactionLike
+desc: 允许bot在napcat平台回复消息时添加表态（aka 反应 表情）或正则触发添加表情。
+version: v1.0.0
+author: pppopipupu
+repo: https://github.com/pppopipupu/emoji_like
+support_platforms:
+  - aiocqhttp
