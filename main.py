@@ -21,11 +21,11 @@ class EmojiReactionLike(Star):
 
     async def _do_emoji_reaction(self, event: AstrMessageEvent, message_id, emoji_id: str):
         if event.get_platform_name() != "aiocqhttp":
-            return None
+            return {"status": "error", "msg": "platform_not_supported"}
 
         from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
         if not isinstance(event, AiocqhttpMessageEvent):
-            return None
+            return {"status": "error", "msg": "platform_not_supported"}
 
         client = event.bot
         payloads = {
@@ -35,10 +35,15 @@ class EmojiReactionLike(Star):
         try:
             ret = await client.api.call_action('set_msg_emoji_like', **payloads)
             logger.info(f"set_msg_emoji_like: message_id={message_id}, emoji_id={emoji_id}, ret={ret}")
-            return ret
+            if isinstance(ret, dict):
+                err_msg = ret.get("errMsg", "")
+                result_code = ret.get("result", 0)
+                if result_code != 0 or err_msg:
+                    return {"status": "duplicate" if "已经设置" in err_msg else "error", "msg": err_msg}
+            return {"status": "ok", "msg": ""}
         except Exception as e:
             logger.error(f"set_msg_emoji_like failed: {e}")
-            return None
+            return {"status": "error", "msg": str(e)}
 
     def _get_reply_message_id(self, event: AstrMessageEvent):
         raw = event.message_obj.raw_message
@@ -75,10 +80,12 @@ class EmojiReactionLike(Star):
 
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, reply_msg_id, parsed_id)
-        if ret is not None:
+        if ret["status"] == "ok":
             yield event.plain_result(f"已对消息添加表情反应 (emoji_id: {parsed_id})")
+        elif ret["status"] == "duplicate":
+            yield event.plain_result(f"该表情已存在 (emoji_id: {parsed_id})")
         else:
-            yield event.plain_result("表情反应失败，请检查日志。")
+            yield event.plain_result(f"表情反应失败: {ret['msg']}")
 
     @filter.command("reactlist")
     async def reactlist(self, event: AstrMessageEvent):
@@ -199,36 +206,38 @@ class EmojiReactionLike(Star):
             if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
                 last_msg.content = ref_block + last_msg.content
 
+    def _tool_result_msg(self, ret):
+        if ret["status"] == "ok":
+            return "成功。不要再调用反应工具，直接回复用户。"
+        elif ret["status"] == "duplicate":
+            return "该表情已存在，无需重复添加。不要再调用反应工具，直接回复用户。"
+        else:
+            return f"失败({ret['msg']})。不要再调用反应工具，直接回复用户。"
+
     @filter.llm_tool(name="react_to_current_message")
     async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str):
-        '''对用户当前发送的消息添加表情反应。
+        '''对用户当前发送的消息添加表情反应。每条消息每种表情只需调用一次，不要重复调用。
         Args:
             emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
         '''
         if event.get_platform_name() != "aiocqhttp":
-            return "当前平台不支持表情反应功能。"
+            return "平台不支持。不要再调用反应工具，直接回复用户。"
 
         current_message_id = event.message_obj.message_id
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, current_message_id, parsed_id)
-        if ret is not None:
-            return f"已成功对用户当前消息添加了表情反应(emoji_id={parsed_id})，请继续正常回复用户的消息。"
-        else:
-            return "表情反应添加失败，可能是表情ID无效或权限不足，请继续正常回复用户。"
+        return self._tool_result_msg(ret)
 
     @filter.llm_tool(name="react_to_message")
     async def react_to_message(self, event: AstrMessageEvent, emoji_id: str, message_id: str):
-        '''对指定消息ID的消息添加表情反应。用于对历史消息进行反应，需要提供目标消息的msg_id。
+        '''对指定消息ID的消息添加表情反应。每条消息每种表情只需调用一次，不要重复调用。
         Args:
             emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
             message_id(string): 目标消息的ID，从消息的msg_id参考表中获取。
         '''
         if event.get_platform_name() != "aiocqhttp":
-            return "当前平台不支持表情反应功能。"
+            return "平台不支持。不要再调用反应工具，直接回复用户。"
 
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, message_id.strip(), parsed_id)
-        if ret is not None:
-            return f"已成功对消息(msg_id={message_id})添加了表情反应(emoji_id={parsed_id})，请继续正常回复用户的消息。"
-        else:
-            return "表情反应添加失败，可能是消息ID或表情ID无效，请继续正常回复用户。"
+        return self._tool_result_msg(ret)
