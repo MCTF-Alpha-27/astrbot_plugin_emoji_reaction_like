@@ -1,4 +1,5 @@
 import re
+from collections import defaultdict, deque
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
@@ -8,6 +9,7 @@ class EmojiReactionLike(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
+        self._msg_id_cache = defaultdict(lambda: deque(maxlen=50))
 
     def _parse_emoji_id(self, emoji_input: str) -> str:
         emoji_input = emoji_input.strip()
@@ -120,6 +122,18 @@ class EmojiReactionLike(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """自动表情反应监听器"""
+        if self.config.get("llm_react_enabled", False) and self.config.get("enable_msg_id_prefix", True):
+            group_id = str(event.message_obj.group_id or "private")
+            sender_name = ""
+            if hasattr(event.message_obj, 'sender') and isinstance(event.message_obj.sender, dict):
+                sender_name = event.message_obj.sender.get("nickname", "")
+            content_preview = (event.message_str or "")[:50]
+            self._msg_id_cache[group_id].append((
+                str(event.message_obj.message_id),
+                sender_name,
+                content_preview
+            ))
+
         if not self.config.get("auto_react", False):
             return
 
@@ -162,21 +176,28 @@ class EmojiReactionLike(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req):
-        """在LLM请求前注入msg_id前缀"""
+        """在LLM请求前注入msg_id参考表"""
         if not self.config.get("llm_react_enabled", False) or not self.config.get("enable_msg_id_prefix", True):
             return
         if event.get_platform_name() != "aiocqhttp":
             return
 
-        message_id = event.message_obj.message_id
-        prefix = f"msg_id:{message_id} "
+        group_id = str(event.message_obj.group_id or "private")
+        cache = list(self._msg_id_cache.get(group_id, []))
+
+        ref_block = ""
+        if cache:
+            ref_lines = []
+            for mid, sender, preview in cache:
+                ref_lines.append(f"msg_id:{mid} [{sender}]: {preview}")
+            ref_block = "[msg_id参考表]\n" + "\n".join(ref_lines) + "\n[/msg_id参考表]\n"
 
         if hasattr(req, 'prompt') and req.prompt:
-            req.prompt = prefix + req.prompt
+            req.prompt = ref_block + req.prompt
         elif hasattr(req, 'messages') and req.messages:
             last_msg = req.messages[-1]
             if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
-                last_msg.content = prefix + last_msg.content
+                last_msg.content = ref_block + last_msg.content
 
     @filter.llm_tool(name="react_to_current_message")
     async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str) -> MessageEventResult:
