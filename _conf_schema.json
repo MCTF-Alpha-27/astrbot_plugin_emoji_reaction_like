@@ -37,27 +37,15 @@
         "hint": "all=所有消息, group=仅群聊, private=仅私聊"
     },
     "llm_react_enabled": {
-        "description": "是否启用 LLM 输出表情反应",
+        "description": "是否启用 LLM 表情反应函数工具",
         "type": "bool",
         "default": false,
-        "hint": "开启后，当LLM输出中包含匹配正则的内容时，自动对用户消息添加表情反应并从回复中移除匹配文本"
+        "hint": "开启后，LLM 可通过函数工具调用 react_to_current_message 和 react_to_message 来添加表情反应"
     },
     "enable_msg_id_prefix": {
-        "description": "是否为 LLM 注入消息 ID 前缀",
+        "description": "是否为消息注入消息 ID 前缀",
         "type": "bool",
         "default": true,
-        "hint": "开启后，会在发送给 LLM 的每条用户消息前添加 msg_id:xxx 前缀，以便 LLM 指定消息进行反应"
-    },
-    "llm_react_regex": {
-        "description": "LLM 输出表情反应正则表达式",
-        "type": "string",
-        "default": "\\[react:([^\\]]+)\\]",
-        "hint": "用于匹配LLM输出中简单表情反应标记的正则表达式。默认匹配 [react:76] 格式(反应当前消息)。此外插件内置支持 [react:76,id:12345] 格式(反应指定消息)"
-    },
-    "llm_react_targeted_regex": {
-        "description": "LLM 指定目标消息的表情反应正则表达式",
-        "type": "string",
-        "default": "\\[react:([^\\],]+),id:([^\\]]+)\\]",
-        "hint": "需要两个捕获组: 第一组为emoji_id, 第二组为目标message_id。默认匹配 [react:76,id:12345] 格式"
+        "hint": "开启后，会在用户消息前添加 msg_id:xxx 前缀，以便 LLM 获取消息 ID 来调用 react_to_message 工具"
     }
 }
