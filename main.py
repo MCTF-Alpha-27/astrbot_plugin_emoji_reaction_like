@@ -111,7 +111,8 @@ class EmojiReactionLike(Star):
             f"反应范围: {self.config.get('react_scope', 'all')}\n"
             f"反应规则:\n{rules_text}"
             f"LLM输出反应: {self.config.get('llm_react_enabled', False)}\n"
-            f"LLM反应正则: {self.config.get('llm_react_regex', '')}\n"
+            f"LLM简单反应正则: {self.config.get('llm_react_regex', '')}\n"
+            f"LLM指定目标正则: {self.config.get('llm_react_targeted_regex', '')}\n"
             "\n请在 AstrBot WebUI 中修改配置。"
         )
         yield event.plain_result(text)
@@ -160,6 +161,23 @@ class EmojiReactionLike(Star):
                     parsed_id = self._parse_emoji_id(str(emoji_input))
                     await self._do_emoji_reaction(event, message_id, parsed_id)
 
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req):
+        """在消息发给LLM前添加msg_id前缀"""
+        if not self.config.get("llm_react_enabled", False) or not self.config.get("enable_msg_id_prefix", True):
+            return
+
+        if event.get_platform_name() != "aiocqhttp":
+            return
+
+        message_id = event.message_obj.message_id
+        if hasattr(req, 'prompt') and req.prompt:
+            req.prompt = f"msg_id:{message_id} {req.prompt}"
+        elif hasattr(req, 'messages') and req.messages:
+            last_msg = req.messages[-1]
+            if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
+                last_msg.content = f"msg_id:{message_id} {last_msg.content}"
+
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp):
         """拦截LLM输出，正则匹配表情反应标记"""
@@ -169,30 +187,42 @@ class EmojiReactionLike(Star):
         if event.get_platform_name() != "aiocqhttp":
             return
 
-        regex_pattern = self.config.get("llm_react_regex", r"\[react:([^\]]+)\]")
-        if not regex_pattern:
-            return
-
         resp_text = getattr(resp, 'completion_text', None) or ""
         if not resp_text:
             return
 
+        current_message_id = event.message_obj.message_id
+
+        targeted_pattern = self.config.get("llm_react_targeted_regex", r"\[react:([^\],]+),id:([^\]]+)\]")
         try:
-            matches = re.findall(regex_pattern, resp_text)
+            targeted_matches = re.findall(targeted_pattern, resp_text)
         except re.error as e:
-            logger.error(f"Invalid regex pattern for LLM react: {e}")
-            return
+            logger.error(f"Invalid regex for targeted LLM react: {e}")
+            targeted_matches = []
 
-        if not matches:
-            return
+        for emoji_raw, target_id in targeted_matches:
+            emoji_id = self._parse_emoji_id(emoji_raw.strip())
+            await self._do_emoji_reaction(event, target_id.strip(), emoji_id)
+            logger.info(f"LLM react (targeted): emoji_id={emoji_id} on message_id={target_id.strip()}")
 
-        message_id = event.message_obj.message_id
-        for match in matches:
-            emoji_id = self._parse_emoji_id(match.strip())
-            await self._do_emoji_reaction(event, message_id, emoji_id)
-            logger.info(f"LLM react: emoji_id={emoji_id} on message_id={message_id}")
+        resp_text = re.sub(targeted_pattern, "", resp_text)
 
-        cleaned_text = re.sub(regex_pattern, "", resp_text).strip()
+        simple_pattern = self.config.get("llm_react_regex", r"\[react:([^\]]+)\]")
+        if simple_pattern:
+            try:
+                simple_matches = re.findall(simple_pattern, resp_text)
+            except re.error as e:
+                logger.error(f"Invalid regex for simple LLM react: {e}")
+                simple_matches = []
+
+            for match in simple_matches:
+                emoji_id = self._parse_emoji_id(match.strip())
+                await self._do_emoji_reaction(event, current_message_id, emoji_id)
+                logger.info(f"LLM react (simple): emoji_id={emoji_id} on message_id={current_message_id}")
+
+            resp_text = re.sub(simple_pattern, "", resp_text)
+
+        cleaned_text = resp_text.strip()
         if hasattr(resp, 'completion_text'):
             resp.completion_text = cleaned_text
 
