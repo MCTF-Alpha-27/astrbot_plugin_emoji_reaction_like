@@ -161,22 +161,15 @@ class EmojiReactionLike(Star):
                     parsed_id = self._parse_emoji_id(str(emoji_input))
                     await self._do_emoji_reaction(event, message_id, parsed_id)
 
-    @filter.on_llm_request()
-    async def on_llm_request(self, event: AstrMessageEvent, req):
-        """在消息发给LLM前添加msg_id前缀"""
+    @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_msg_id_prefix(self, event: AstrMessageEvent):
+        """在OneBot消息到达时为消息添加msg_id前缀"""
         if not self.config.get("llm_react_enabled", False) or not self.config.get("enable_msg_id_prefix", True):
             return
 
-        if event.get_platform_name() != "aiocqhttp":
-            return
-
         message_id = event.message_obj.message_id
-        if hasattr(req, 'prompt') and req.prompt:
-            req.prompt = f"msg_id:{message_id} {req.prompt}"
-        elif hasattr(req, 'messages') and req.messages:
-            last_msg = req.messages[-1]
-            if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
-                last_msg.content = f"msg_id:{message_id} {last_msg.content}"
+        event.message_str = f"msg_id:{message_id} {event.message_str}"
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp):
