@@ -119,8 +119,10 @@ class EmojiReactionLike(Star):
             f"自动反应: {self.config.get('auto_react', False)}\n"
             f"反应范围: {self.config.get('react_scope', 'all')}\n"
             f"反应规则:\n{rules_text}"
-            f"LLM函数工具: {self.config.get('llm_react_enabled', False)}\n"
-            f"消息ID前缀: {self.config.get('enable_msg_id_prefix', True)}\n"
+            f"LLM输出反应: {self.config.get('llm_react_enabled', False)}\n"
+            f"消息ID参考表: {self.config.get('enable_msg_id_prefix', True)}\n"
+            f"简单反应正则: {self.config.get('llm_react_regex', '')}\n"
+            f"指定目标正则: {self.config.get('llm_react_targeted_regex', '')}\n"
             "\n请在 AstrBot WebUI 中修改配置。"
         )
         yield event.plain_result(text)
@@ -206,38 +208,50 @@ class EmojiReactionLike(Star):
             if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
                 last_msg.content = ref_block + last_msg.content
 
-    def _tool_result_msg(self, ret):
-        if ret["status"] == "ok":
-            return "成功。不要再调用反应工具，直接回复用户。"
-        elif ret["status"] == "duplicate":
-            return "该表情已存在，无需重复添加。不要再调用反应工具，直接回复用户。"
-        else:
-            return f"失败({ret['msg']})。不要再调用反应工具，直接回复用户。"
+    @filter.on_llm_response()
+    async def on_llm_response(self, event: AstrMessageEvent, resp):
+        """拦截LLM输出，正则匹配表情反应标记并一次性处理"""
+        if not self.config.get("llm_react_enabled", False):
+            return
 
-    @filter.llm_tool(name="react_to_current_message")
-    async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str):
-        '''对用户当前发送的消息添加表情反应。每条消息每种表情只需调用一次，不要重复调用。
-        Args:
-            emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
-        '''
         if event.get_platform_name() != "aiocqhttp":
-            return "平台不支持。不要再调用反应工具，直接回复用户。"
+            return
+
+        resp_text = getattr(resp, 'completion_text', None) or ""
+        if not resp_text:
+            return
 
         current_message_id = event.message_obj.message_id
-        parsed_id = self._parse_emoji_id(emoji_id)
-        ret = await self._do_emoji_reaction(event, current_message_id, parsed_id)
-        return self._tool_result_msg(ret)
 
-    @filter.llm_tool(name="react_to_message")
-    async def react_to_message(self, event: AstrMessageEvent, emoji_id: str, message_id: str):
-        '''对指定消息ID的消息添加表情反应。每条消息每种表情只需调用一次，不要重复调用。
-        Args:
-            emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
-            message_id(string): 目标消息的ID，从消息的msg_id参考表中获取。
-        '''
-        if event.get_platform_name() != "aiocqhttp":
-            return "平台不支持。不要再调用反应工具，直接回复用户。"
+        targeted_pattern = self.config.get("llm_react_targeted_regex", r"\[react:([^\],]+),id:([^\]]+)\]")
+        try:
+            targeted_matches = re.findall(targeted_pattern, resp_text)
+        except re.error as e:
+            logger.error(f"Invalid regex for targeted LLM react: {e}")
+            targeted_matches = []
 
-        parsed_id = self._parse_emoji_id(emoji_id)
-        ret = await self._do_emoji_reaction(event, message_id.strip(), parsed_id)
-        return self._tool_result_msg(ret)
+        for emoji_raw, target_id in targeted_matches:
+            emoji_id = self._parse_emoji_id(emoji_raw.strip())
+            await self._do_emoji_reaction(event, target_id.strip(), emoji_id)
+            logger.info(f"LLM react (targeted): emoji_id={emoji_id} on message_id={target_id.strip()}")
+
+        resp_text = re.sub(targeted_pattern, "", resp_text)
+
+        simple_pattern = self.config.get("llm_react_regex", r"\[react:([^\]]+)\]")
+        if simple_pattern:
+            try:
+                simple_matches = re.findall(simple_pattern, resp_text)
+            except re.error as e:
+                logger.error(f"Invalid regex for simple LLM react: {e}")
+                simple_matches = []
+
+            for match in simple_matches:
+                emoji_id = self._parse_emoji_id(match.strip())
+                await self._do_emoji_reaction(event, current_message_id, emoji_id)
+                logger.info(f"LLM react (simple): emoji_id={emoji_id} on message_id={current_message_id}")
+
+            resp_text = re.sub(simple_pattern, "", resp_text)
+
+        cleaned_text = resp_text.strip()
+        if hasattr(resp, 'completion_text'):
+            resp.completion_text = cleaned_text
