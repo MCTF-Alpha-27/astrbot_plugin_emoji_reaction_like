@@ -119,22 +119,7 @@ class EmojiReactionLike(Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
-        """自动表情反应监听器 & 消息ID前缀注入"""
-        if self.config.get("llm_react_enabled", False) and self.config.get("enable_msg_id_prefix", True):
-            mid = event.message_obj.message_id
-            prefix = f"msg_id:{mid} "
-            event.message_str = prefix + event.message_str
-            from astrbot.api.message_components import Plain
-            chain = event.message_obj.message
-            if chain:
-                for i, comp in enumerate(chain):
-                    if isinstance(comp, Plain):
-                        chain[i] = Plain(prefix + comp.text)
-                        break
-                else:
-                    chain.insert(0, Plain(prefix))
-            logger.info(f"msg_id prefix added: {prefix}")
-
+        """自动表情反应监听器"""
         if not self.config.get("auto_react", False):
             return
 
@@ -175,6 +160,24 @@ class EmojiReactionLike(Star):
                     parsed_id = self._parse_emoji_id(str(emoji_input))
                     await self._do_emoji_reaction(event, message_id, parsed_id)
 
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req):
+        """在LLM请求前注入msg_id前缀"""
+        if not self.config.get("llm_react_enabled", False) or not self.config.get("enable_msg_id_prefix", True):
+            return
+        if event.get_platform_name() != "aiocqhttp":
+            return
+
+        message_id = event.message_obj.message_id
+        prefix = f"msg_id:{message_id} "
+
+        if hasattr(req, 'prompt') and req.prompt:
+            req.prompt = prefix + req.prompt
+        elif hasattr(req, 'messages') and req.messages:
+            last_msg = req.messages[-1]
+            if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
+                last_msg.content = prefix + last_msg.content
+
     @filter.llm_tool(name="react_to_current_message")
     async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str) -> MessageEventResult:
         '''对用户当前发送的消息添加表情反应。
@@ -182,11 +185,16 @@ class EmojiReactionLike(Star):
             emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
         '''
         if event.get_platform_name() != "aiocqhttp":
+            yield event.plain_result("不支持")
             return
 
         current_message_id = event.message_obj.message_id
         parsed_id = self._parse_emoji_id(emoji_id)
-        await self._do_emoji_reaction(event, current_message_id, parsed_id)
+        ret = await self._do_emoji_reaction(event, current_message_id, parsed_id)
+        if ret is not None:
+            yield event.plain_result(f"已成功对用户当前消息添加了表情反应(emoji_id={parsed_id})，用户不会看到这条工具调用结果，请继续正常回复用户的消息。")
+        else:
+            yield event.plain_result("表情反应添加失败，可能是表情ID无效或权限不足，请继续正常回复用户。")
 
     @filter.llm_tool(name="react_to_message")
     async def react_to_message(self, event: AstrMessageEvent, emoji_id: str, message_id: str) -> MessageEventResult:
@@ -196,7 +204,12 @@ class EmojiReactionLike(Star):
             message_id(string): 目标消息的ID，从用户消息的msg_id前缀中获取。
         '''
         if event.get_platform_name() != "aiocqhttp":
+            yield event.plain_result("不支持")
             return
 
         parsed_id = self._parse_emoji_id(emoji_id)
-        await self._do_emoji_reaction(event, message_id.strip(), parsed_id)
+        ret = await self._do_emoji_reaction(event, message_id.strip(), parsed_id)
+        if ret is not None:
+            yield event.plain_result(f"已成功对消息(msg_id={message_id})添加了表情反应(emoji_id={parsed_id})，用户不会看到这条工具调用结果，请继续正常回复用户的消息。")
+        else:
+            yield event.plain_result("表情反应添加失败，可能是消息ID或表情ID无效，请继续正常回复用户。")
