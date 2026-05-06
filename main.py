@@ -168,7 +168,21 @@ class EmojiReactionLike(Star):
             return
 
         message_id = event.message_obj.message_id
-        event.message_str = f"msg_id:{message_id} {event.message_str}"
+        prefix = f"msg_id:{message_id} "
+
+        event.message_str = prefix + event.message_str
+
+        from astrbot.api.message_components import Plain
+        chain = event.message_obj.message
+        if chain:
+            for i, comp in enumerate(chain):
+                if isinstance(comp, Plain):
+                    chain[i] = Plain(prefix + comp.text)
+                    break
+            else:
+                chain.insert(0, Plain(prefix))
+
+        logger.debug(f"msg_id prefix added: {prefix}")
 
     @filter.llm_tool(name="react_to_current_message")
     async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str) -> MessageEventResult:
@@ -177,16 +191,16 @@ class EmojiReactionLike(Star):
             emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
         '''
         if event.get_platform_name() != "aiocqhttp":
-            yield event.plain_result("该功能仅支持QQ平台。")
+            yield event.plain_result("平台不支持")
             return
 
         current_message_id = event.message_obj.message_id
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, current_message_id, parsed_id)
         if ret is not None:
-            yield event.plain_result(f"已对当前消息添加表情反应 (emoji_id: {parsed_id})")
+            yield event.plain_result("成功")
         else:
-            yield event.plain_result("表情反应失败。")
+            yield event.plain_result("失败")
 
     @filter.llm_tool(name="react_to_message")
     async def react_to_message(self, event: AstrMessageEvent, emoji_id: str, message_id: str) -> MessageEventResult:
@@ -196,12 +210,12 @@ class EmojiReactionLike(Star):
             message_id(string): 目标消息的ID，从用户消息的msg_id前缀中获取。
         '''
         if event.get_platform_name() != "aiocqhttp":
-            yield event.plain_result("该功能仅支持QQ平台。")
+            yield event.plain_result("平台不支持")
             return
 
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, message_id.strip(), parsed_id)
         if ret is not None:
-            yield event.plain_result(f"已对消息 {message_id} 添加表情反应 (emoji_id: {parsed_id})")
+            yield event.plain_result("成功")
         else:
-            yield event.plain_result("表情反应失败。")
+            yield event.plain_result("失败")
