@@ -200,37 +200,35 @@ class EmojiReactionLike(Star):
                 last_msg.content = ref_block + last_msg.content
 
     @filter.llm_tool(name="react_to_current_message")
-    async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str) -> MessageEventResult:
+    async def react_to_current_message(self, event: AstrMessageEvent, emoji_id: str):
         '''对用户当前发送的消息添加表情反应。
         Args:
             emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
         '''
         if event.get_platform_name() != "aiocqhttp":
-            yield event.plain_result("不支持")
-            return
+            return "当前平台不支持表情反应功能。"
 
         current_message_id = event.message_obj.message_id
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, current_message_id, parsed_id)
         if ret is not None:
-            yield event.plain_result(f"已成功对用户当前消息添加了表情反应(emoji_id={parsed_id})，用户不会看到这条工具调用结果，请继续正常回复用户的消息。")
+            return f"已成功对用户当前消息添加了表情反应(emoji_id={parsed_id})，请继续正常回复用户的消息。"
         else:
-            yield event.plain_result("表情反应添加失败，可能是表情ID无效或权限不足，请继续正常回复用户。")
+            return "表情反应添加失败，可能是表情ID无效或权限不足，请继续正常回复用户。"
 
     @filter.llm_tool(name="react_to_message")
-    async def react_to_message(self, event: AstrMessageEvent, emoji_id: str, message_id: str) -> MessageEventResult:
+    async def react_to_message(self, event: AstrMessageEvent, emoji_id: str, message_id: str):
         '''对指定消息ID的消息添加表情反应。用于对历史消息进行反应，需要提供目标消息的msg_id。
         Args:
             emoji_id(string): 表情ID。QQ原生表情使用数字如448代表火球术、447代表点赞、446代表摧心术、445代表魅惑怪物、444代表666、443代表死亡一指、442代表鸽子跳舞，也可以使用Unicode emoji字符。
-            message_id(string): 目标消息的ID，从用户消息的msg_id前缀中获取。
+            message_id(string): 目标消息的ID，从消息的msg_id参考表中获取。
         '''
         if event.get_platform_name() != "aiocqhttp":
-            yield event.plain_result("不支持")
-            return
+            return "当前平台不支持表情反应功能。"
 
         parsed_id = self._parse_emoji_id(emoji_id)
         ret = await self._do_emoji_reaction(event, message_id.strip(), parsed_id)
         if ret is not None:
-            yield event.plain_result(f"已成功对消息(msg_id={message_id})添加了表情反应(emoji_id={parsed_id})，用户不会看到这条工具调用结果，请继续正常回复用户的消息。")
+            return f"已成功对消息(msg_id={message_id})添加了表情反应(emoji_id={parsed_id})，请继续正常回复用户的消息。"
         else:
-            yield event.plain_result("表情反应添加失败，可能是消息ID或表情ID无效，请继续正常回复用户。")
+            return "表情反应添加失败，可能是消息ID或表情ID无效，请继续正常回复用户。"
