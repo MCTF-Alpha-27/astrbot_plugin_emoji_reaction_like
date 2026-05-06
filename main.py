@@ -1,4 +1,5 @@
 import re
+import time
 from collections import defaultdict, deque
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
@@ -136,11 +137,15 @@ class EmojiReactionLike(Star):
             sender_name = ""
             if hasattr(event.message_obj, 'sender') and isinstance(event.message_obj.sender, dict):
                 sender_name = event.message_obj.sender.get("nickname", "")
-            content_preview = (event.message_str or "")[:50]
+            ts = getattr(event.message_obj, 'timestamp', None)
+            if ts:
+                time_str = time.strftime("%H:%M:%S", time.localtime(ts))
+            else:
+                time_str = time.strftime("%H:%M:%S", time.localtime())
             self._msg_id_cache[group_id].append((
                 str(event.message_obj.message_id),
                 sender_name,
-                content_preview
+                time_str
             ))
 
         if not self.config.get("auto_react", False):
@@ -185,7 +190,7 @@ class EmojiReactionLike(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req):
-        """在LLM请求前注入msg_id参考表"""
+        """在LLM请求前为历史消息注入msg_id"""
         if not self.config.get("llm_react_enabled", False) or not self.config.get("enable_msg_id_prefix", True):
             return
         if event.get_platform_name() != "aiocqhttp":
@@ -193,20 +198,38 @@ class EmojiReactionLike(Star):
 
         group_id = str(event.message_obj.group_id or "private")
         cache = list(self._msg_id_cache.get(group_id, []))
+        if not cache:
+            return
 
-        ref_block = ""
-        if cache:
-            ref_lines = []
-            for mid, sender, preview in cache:
-                ref_lines.append(f"msg_id:{mid} [{sender}]: {preview}")
-            ref_block = "[msg_id参考表]\n" + "\n".join(ref_lines) + "\n[/msg_id参考表]\n"
+        cache_lookup = {}
+        for mid, sender, ts in cache:
+            key = (sender, ts)
+            cache_lookup[key] = mid
+
+        current_mid = str(event.message_obj.message_id)
+
+        def inject_msg_ids(text):
+            def replacer(m):
+                sender = m.group(1).strip()
+                time_str = m.group(2)
+                key = (sender, time_str)
+                if key in cache_lookup:
+                    return f"msg_id:{cache_lookup[key]} {m.group(0)}"
+                return m.group(0)
+            text = re.sub(r'\[([^/]+)/(\d{2}:\d{2}:\d{2})\]:', replacer, text)
+            text = re.sub(
+                r"(Now, a new message is coming: )",
+                f"msg_id:{current_mid} \\1",
+                text
+            )
+            return text
 
         if hasattr(req, 'prompt') and req.prompt:
-            req.prompt = ref_block + req.prompt
+            req.prompt = inject_msg_ids(req.prompt)
         elif hasattr(req, 'messages') and req.messages:
             last_msg = req.messages[-1]
             if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
-                last_msg.content = ref_block + last_msg.content
+                last_msg.content = inject_msg_ids(last_msg.content)
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp):
