@@ -1,6 +1,5 @@
 import re
 import time
-from collections import defaultdict, deque
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
@@ -10,7 +9,6 @@ class EmojiReactionLike(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        self._msg_id_cache = defaultdict(lambda: deque(maxlen=50))
 
     def _parse_emoji_id(self, emoji_input: str) -> str:
         emoji_input = emoji_input.strip()
@@ -132,27 +130,6 @@ class EmojiReactionLike(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """自动表情反应监听器"""
-        llm_enabled = self.config.get("llm_react_enabled", False)
-        prefix_enabled = self.config.get("enable_msg_id_prefix", True)
-        logger.debug(f"on_all_message called: llm_react_enabled={llm_enabled}, enable_msg_id_prefix={prefix_enabled}")
-
-        if llm_enabled and prefix_enabled:
-            group_id = str(event.message_obj.group_id or "private")
-            sender_name = ""
-            if hasattr(event.message_obj, 'sender') and isinstance(event.message_obj.sender, dict):
-                sender_name = event.message_obj.sender.get("nickname", "")
-            ts = getattr(event.message_obj, 'timestamp', None)
-            if ts:
-                time_str = time.strftime("%H:%M:%S", time.localtime(ts))
-            else:
-                time_str = time.strftime("%H:%M:%S", time.localtime())
-            self._msg_id_cache[group_id].append((
-                str(event.message_obj.message_id),
-                sender_name,
-                time_str
-            ))
-            logger.debug(f"msg_id cache: id={event.message_obj.message_id}, sender='{sender_name}', time='{time_str}', raw_ts={ts}")
-
         if not self.config.get("auto_react", False):
             return
 
@@ -201,29 +178,40 @@ class EmojiReactionLike(Star):
         if event.get_platform_name() != "aiocqhttp":
             return
 
-        group_id = str(event.message_obj.group_id or "private")
-        cache = list(self._msg_id_cache.get(group_id, []))
-        if not cache:
+        group_id = event.message_obj.group_id
+        if not group_id:
+            return
+
+        from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
+        if not isinstance(event, AiocqhttpMessageEvent):
+            return
+
+        try:
+            history = await event.bot.api.call_action('get_group_msg_history', group_id=int(group_id), count=50)
+            messages = history.get('messages', []) if isinstance(history, dict) else []
+        except Exception as e:
+            logger.error(f"get_group_msg_history failed: {e}")
             return
 
         cache_lookup = {}
-        for mid, sender, ts in cache:
-            key = (sender, ts)
-            cache_lookup[key] = mid
+        for msg in messages:
+            mid = str(msg.get('message_id', ''))
+            sender = msg.get('sender', {})
+            nickname = sender.get('nickname', '') or sender.get('card', '')
+            msg_time = msg.get('time', 0)
+            time_str = time.strftime("%H:%M:%S", time.localtime(msg_time)) if msg_time else ''
+            if nickname and time_str:
+                cache_lookup[(nickname, time_str)] = mid
 
         current_mid = str(event.message_obj.message_id)
 
         def inject_msg_ids(text):
-            matched = []
-            missed = []
             def replacer(m):
                 sender = m.group(1).strip()
                 time_str = m.group(2)
                 key = (sender, time_str)
                 if key in cache_lookup:
-                    matched.append(key)
                     return f"msg_id:{cache_lookup[key]} {m.group(0)}"
-                missed.append(key)
                 return m.group(0)
             text = re.sub(r'\[([^/]+)/(\d{2}:\d{2}:\d{2})\]:', replacer, text)
             text = re.sub(
@@ -231,7 +219,6 @@ class EmojiReactionLike(Star):
                 f"msg_id:{current_mid} \\1",
                 text
             )
-            logger.debug(f"msg_id inject: matched={len(matched)}, missed={len(missed)}, cache_keys={list(cache_lookup.keys())}, missed_keys={missed}")
             return text
 
         if hasattr(req, 'prompt') and req.prompt:
