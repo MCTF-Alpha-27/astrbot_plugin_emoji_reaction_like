@@ -198,11 +198,14 @@ class EmojiReactionLike(Star):
         for msg in messages:
             mid = str(msg.get('message_id', ''))
             sender = msg.get('sender', {})
-            nickname = sender.get('nickname', '') or sender.get('card', '')
+            nickname = sender.get('card', '') or sender.get('nickname', '')
             msg_time = msg.get('time', 0)
-            time_str = time.strftime("%H:%M:%S", time.localtime(msg_time)) if msg_time else ''
-            if nickname and time_str:
-                cache_lookup[(nickname, time_str)] = mid
+            if msg_time:
+                local_t = time.localtime(msg_time)
+                seconds = local_t.tm_hour * 3600 + local_t.tm_min * 60 + local_t.tm_sec
+                if nickname not in cache_lookup:
+                    cache_lookup[nickname] = []
+                cache_lookup[nickname].append((seconds, mid))
 
         current_mid = str(event.message_obj.message_id)
 
@@ -210,9 +213,25 @@ class EmojiReactionLike(Star):
             def replacer(m):
                 sender = m.group(1).strip()
                 time_str = m.group(2)
-                key = (sender, time_str)
-                if key in cache_lookup:
-                    return f"msg_id:{cache_lookup[key]} {m.group(0)}"
+                
+                try:
+                    h, min_, s = map(int, time_str.split(':'))
+                    req_seconds = h * 3600 + min_ * 60 + s
+                except ValueError:
+                    return m.group(0)
+
+                if sender in cache_lookup:
+                    closest_mid = None
+                    min_diff = 60
+                    for cached_sec, mid in cache_lookup[sender]:
+                        diff = abs(cached_sec - req_seconds)
+                        if diff > 12 * 3600:
+                            diff = 24 * 3600 - diff
+                        if diff < min_diff:
+                            min_diff = diff
+                            closest_mid = mid
+                    if closest_mid:
+                        return f"msg_id:{closest_mid} {m.group(0)}"
                 return m.group(0)
             text = re.sub(r'\[([^/]+)/(\d{2}:\d{2}:\d{2})\]:', replacer, text)
             text = re.sub(
