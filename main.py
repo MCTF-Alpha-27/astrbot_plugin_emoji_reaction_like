@@ -147,6 +147,7 @@ class EmojiReactionLike(Star):
                 sender_name,
                 time_str
             ))
+            logger.debug(f"msg_id cache: id={event.message_obj.message_id}, sender='{sender_name}', time='{time_str}', raw_ts={ts}")
 
         if not self.config.get("auto_react", False):
             return
@@ -209,12 +210,16 @@ class EmojiReactionLike(Star):
         current_mid = str(event.message_obj.message_id)
 
         def inject_msg_ids(text):
+            matched = []
+            missed = []
             def replacer(m):
                 sender = m.group(1).strip()
                 time_str = m.group(2)
                 key = (sender, time_str)
                 if key in cache_lookup:
+                    matched.append(key)
                     return f"msg_id:{cache_lookup[key]} {m.group(0)}"
+                missed.append(key)
                 return m.group(0)
             text = re.sub(r'\[([^/]+)/(\d{2}:\d{2}:\d{2})\]:', replacer, text)
             text = re.sub(
@@ -222,6 +227,7 @@ class EmojiReactionLike(Star):
                 f"msg_id:{current_mid} \\1",
                 text
             )
+            logger.debug(f"msg_id inject: matched={len(matched)}, missed={len(missed)}, cache_keys={list(cache_lookup.keys())}, missed_keys={missed}")
             return text
 
         if hasattr(req, 'prompt') and req.prompt:
