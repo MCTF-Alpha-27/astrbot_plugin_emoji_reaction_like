@@ -132,7 +132,11 @@ class EmojiReactionLike(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         """自动表情反应监听器"""
-        if self.config.get("llm_react_enabled", False) and self.config.get("enable_msg_id_prefix", True):
+        llm_enabled = self.config.get("llm_react_enabled", False)
+        prefix_enabled = self.config.get("enable_msg_id_prefix", True)
+        logger.debug(f"on_all_message called: llm_react_enabled={llm_enabled}, enable_msg_id_prefix={prefix_enabled}")
+
+        if llm_enabled and prefix_enabled:
             group_id = str(event.message_obj.group_id or "private")
             sender_name = ""
             if hasattr(event.message_obj, 'sender') and isinstance(event.message_obj.sender, dict):
