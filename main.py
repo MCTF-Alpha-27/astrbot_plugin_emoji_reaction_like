@@ -229,50 +229,48 @@ class EmojiReactionLike(Star):
             if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
                 last_msg.content = inject_msg_ids(last_msg.content)
 
-    @filter.on_llm_response()
-    async def on_llm_response(self, event: AstrMessageEvent, resp):
-        """拦截LLM输出，正则匹配表情反应标记并一次性处理"""
+    @filter.on_decorating_result()
+    async def on_decorating_result(self, event: AstrMessageEvent):
+        """拦截即将发送的消息，提取并执行表情反应标记"""
         if not self.config.get("llm_react_enabled", False):
             return
 
         if event.get_platform_name() != "aiocqhttp":
             return
 
-        resp_text = getattr(resp, 'completion_text', None) or ""
-        if not resp_text:
+        result = event.get_result()
+        if not result or not hasattr(result, "chain") or not result.chain:
             return
 
         current_message_id = event.message_obj.message_id
-
         targeted_pattern = self.config.get("llm_react_targeted_regex", r"\[react:([^\],]+),id:([^\]]+)\]")
-        try:
-            targeted_matches = re.findall(targeted_pattern, resp_text)
-        except re.error as e:
-            logger.error(f"Invalid regex for targeted LLM react: {e}")
-            targeted_matches = []
-
-        for emoji_raw, target_id in targeted_matches:
-            emoji_id = self._parse_emoji_id(emoji_raw.strip())
-            await self._do_emoji_reaction(event, target_id.strip(), emoji_id)
-            logger.info(f"LLM react (targeted): emoji_id={emoji_id} on message_id={target_id.strip()}")
-
-        resp_text = re.sub(targeted_pattern, "", resp_text)
-
         simple_pattern = self.config.get("llm_react_regex", r"\[react:([^\]]+)\]")
-        if simple_pattern:
-            try:
-                simple_matches = re.findall(simple_pattern, resp_text)
-            except re.error as e:
-                logger.error(f"Invalid regex for simple LLM react: {e}")
-                simple_matches = []
 
-            for match in simple_matches:
-                emoji_id = self._parse_emoji_id(match.strip())
-                await self._do_emoji_reaction(event, current_message_id, emoji_id)
-                logger.info(f"LLM react (simple): emoji_id={emoji_id} on message_id={current_message_id}")
+        from astrbot.api.message_components import Plain
 
-            resp_text = re.sub(simple_pattern, "", resp_text)
+        for comp in result.chain:
+            if isinstance(comp, Plain) and comp.text:
+                original_text = comp.text
+                
+                try:
+                    targeted_matches = re.findall(targeted_pattern, original_text)
+                    for emoji_raw, target_id in targeted_matches:
+                        emoji_id = self._parse_emoji_id(emoji_raw.strip())
+                        await self._do_emoji_reaction(event, target_id.strip(), emoji_id)
+                        logger.info(f"LLM react (targeted): emoji_id={emoji_id} on message_id={target_id.strip()}")
+                    original_text = re.sub(targeted_pattern, "", original_text)
+                except re.error as e:
+                    logger.error(f"Invalid regex for targeted LLM react: {e}")
 
-        cleaned_text = resp_text.strip()
-        if hasattr(resp, 'completion_text'):
-            resp.completion_text = cleaned_text
+                if simple_pattern:
+                    try:
+                        simple_matches = re.findall(simple_pattern, original_text)
+                        for match in simple_matches:
+                            emoji_id = self._parse_emoji_id(match.strip())
+                            await self._do_emoji_reaction(event, current_message_id, emoji_id)
+                            logger.info(f"LLM react (simple): emoji_id={emoji_id} on message_id={current_message_id}")
+                        original_text = re.sub(simple_pattern, "", original_text)
+                    except re.error as e:
+                        logger.error(f"Invalid regex for simple LLM react: {e}")
+
+                comp.text = original_text
