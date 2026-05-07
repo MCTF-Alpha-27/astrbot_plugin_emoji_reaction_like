@@ -187,7 +187,8 @@ class EmojiReactionLike(Star):
             return
 
         try:
-            history = await event.bot.api.call_action('get_group_msg_history', group_id=int(group_id), count=50)
+            max_history = self.context.get_config().get("max_history", 150)
+            history = await event.bot.api.call_action('get_group_msg_history', group_id=int(group_id), count=max_history)
             messages = history.get('messages', []) if isinstance(history, dict) else []
         except Exception as e:
             logger.error(f"get_group_msg_history failed: {e}")
