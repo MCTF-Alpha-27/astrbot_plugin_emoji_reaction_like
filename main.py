@@ -173,6 +173,7 @@ class EmojiReactionLike(Star):
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req):
         """在LLM请求前为历史消息注入msg_id"""
+        logger.info(f"on_llm_request: req type is {type(req)}")
         if not self.config.get("llm_react_enabled", False) or not self.config.get("enable_msg_id_prefix", True):
             return
         if event.get_platform_name() != "aiocqhttp":
@@ -198,14 +199,18 @@ class EmojiReactionLike(Star):
         for msg in messages:
             mid = str(msg.get('message_id', ''))
             sender = msg.get('sender', {})
-            nickname = sender.get('card', '') or sender.get('nickname', '')
+            nick = sender.get('nickname', '').strip()
+            card = sender.get('card', '').strip()
             msg_time = msg.get('time', 0)
             if msg_time:
                 local_t = time.localtime(msg_time)
                 seconds = local_t.tm_hour * 3600 + local_t.tm_min * 60 + local_t.tm_sec
-                if nickname not in cache_lookup:
-                    cache_lookup[nickname] = []
-                cache_lookup[nickname].append((seconds, mid))
+                
+                for name in (nick, card):
+                    if name:
+                        if name not in cache_lookup:
+                            cache_lookup[name] = []
+                        cache_lookup[name].append((seconds, mid))
 
         current_mid = str(event.message_obj.message_id)
 
@@ -240,7 +245,7 @@ class EmojiReactionLike(Star):
                 text
             )
             return text
-
+        
         if hasattr(req, 'prompt') and req.prompt:
             req.prompt = inject_msg_ids(req.prompt)
         elif hasattr(req, 'messages') and req.messages:
