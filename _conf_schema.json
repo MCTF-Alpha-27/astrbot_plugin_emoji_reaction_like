@@ -39,7 +39,7 @@
     "llm_react_enabled": {
         "description": "是否启用 LLM 输出表情反应",
         "type": "bool",
-        "default": false,
+        "default": true,
         "hint": "开启后，LLM 在回复中使用 [react:表情ID] 或 [react:表情ID,id:消息ID] 标记来添加表情反应"
     },
     "enable_msg_id_prefix": {
@@ -59,5 +59,11 @@
         "type": "string",
         "default": "\\[react:([^\\],]+),id:([^\\]]+)\\]",
         "hint": "匹配 LLM 输出中的指定目标反应标记，反应指定消息"
+    },
+    "msg_id_cache_size": {
+        "description": "消息 ID 缓存大小",
+        "type": "int",
+        "default": 10,
+        "hint": "用于注入到 LLM 请求中的消息 ID 参考表的最大缓存数量，建议根据实际情况调整，过大可能导致性能问题"
     }
 }

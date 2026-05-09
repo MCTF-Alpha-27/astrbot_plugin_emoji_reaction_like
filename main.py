@@ -129,6 +129,20 @@ class EmojiReactionLike(Star):
         )
         yield event.plain_result(text)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("cache")
+    async def cache(self, event: AstrMessageEvent):
+        """显示当前消息ID缓存（调试用）"""
+        group_id = str(event.message_obj.group_id or "private")
+        cache = list(self._msg_id_cache.get(group_id, []))
+        if not cache:
+            yield event.plain_result("当前消息ID缓存为空")
+            return
+        text = "当前消息ID缓存:\n"
+        for mid, sender, ts, msg_str in cache:
+            text += f"  msg_id: {mid}, sender: {sender}, time: {ts}, message: {msg_str}\n"
+        yield event.plain_result(text)
+
     @filter.platform_adapter_type(filter.PlatformAdapterType.AIOCQHTTP)
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
@@ -146,7 +160,8 @@ class EmojiReactionLike(Star):
             self._msg_id_cache[group_id].append((
                 str(event.message_obj.message_id),
                 sender_name,
-                time_str
+                time_str,
+                event.message_str
             ))
 
         if not self.config.get("auto_react", False):
@@ -198,35 +213,19 @@ class EmojiReactionLike(Star):
             return
 
         group_id = str(event.message_obj.group_id or "private")
-        cache = list(self._msg_id_cache.get(group_id, []))
+        cache = list(self._msg_id_cache.get(group_id, []))[-self.config.get("msg_id_cache_size", 10):]
         if not cache:
             return
 
-        cache_lookup = {}
-        for mid, sender, ts in cache:
-            key = (sender, ts)
-            cache_lookup[key] = mid
-            logger.info(f"Cache entry: {key} -> {mid}")
+        prompt_addon = []
+        for mid, sender, ts, msg_str in cache:
+            if not mid.isdigit():
+                continue
+            prefix = f"msg_id:{mid}, sender:{sender}, time:{ts}, message:{msg_str}"
+            prompt_addon.append(prefix)
 
-        current_mid = str(event.message_obj.message_id)
-
-        def inject_msg_ids(text):
-            def replacer(m):
-                sender = m.group(1).strip()
-                time_str = m.group(2)
-                key = (sender, time_str)
-                if key in cache_lookup:
-                    return f"msg_id:{cache_lookup[key]} {m.group(0)}"
-                return m.group(0)
-            text = re.sub(r'\[([^/]+)/(\d{2}:\d{2}:\d{2})\]:', replacer, text)
-            text = re.sub(
-                r"(Now, a new message is coming: )",
-                f"msg_id:{current_mid} \\1",
-                text
-            )
-            return text
-
-        req.prompt = inject_msg_ids(req.prompt)
+        req.prompt = req.prompt.replace("Now, a new message is coming:", f"Now, a new message is coming (msg_id: {event.message_obj.message_id}):")
+        req.prompt += f"The previous message list is as follows. You can get the msg_id from it: {prompt_addon}"
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp):
@@ -278,10 +277,10 @@ class EmojiReactionLike(Star):
 
     @filter.llm_tool()
     async def emoji_reaction_tool(self, event: AstrMessageEvent, message_id: str, emoji_id: str):
-        """对一条消息进行表态。
+        """对一条消息进行表态。当用户要求你“点个表态”或给一条消息“点赞”等时，调用此工具。注意：此工具与发表情包的工具不同。
 
         Args:
-            message_id(string): 目标消息的msg_id
+            message_id(string): 目标消息的msg_id，注意不是用户的User ID
             emoji_id(string): 表情ID，可以是数字ID或者直接的emoji字符
         """
         if event.get_platform_name() != "aiocqhttp":
